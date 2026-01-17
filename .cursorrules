@@ -1,0 +1,85 @@
+# InsightAgent Project Rules
+
+## Project Overview
+InsightAgent is a full-stack NLP search and retrieval tool for PDF question-answering.
+- Backend: Python/FastAPI
+- Frontend: TypeScript/React with Vite
+- Vector DB: FAISS with file-based persistence
+- Embeddings: BAAI/bge-small-en-v1.5 (local)
+- LLM: OpenAI API
+
+## Code Style
+
+### Python (Backend)
+- Use Python 3.11+
+- Follow PEP 8 style guidelines
+- Use type hints for all function signatures
+- Use Pydantic models for request/response validation
+- Keep functions small and focused (single responsibility)
+- Use async/await for I/O operations
+- Organize imports: stdlib, third-party, local
+
+### TypeScript (Frontend)
+- Use TypeScript strict mode
+- Prefer functional components with hooks
+- Use named exports over default exports
+- Keep components small and composable
+- Use descriptive variable names
+- Avoid any type - use proper typing
+
+## Architecture Patterns
+
+### Backend
+- Services are stateless and injectable
+- Use dependency injection via FastAPI's Depends
+- Keep route handlers thin - delegate to services
+- All responses use Pydantic models
+- Error handling via HTTPException with proper status codes
+
+### Frontend
+- State management via React hooks (useState, useReducer)
+- API calls in dedicated service files
+- Separate presentational and container components
+- Use TailwindCSS for styling
+
+## File Organization
+
+### Backend Structure
+```
+backend/
+├── app/
+│   ├── main.py           # FastAPI app entry
+│   ├── routes/           # API route handlers
+│   ├── services/         # Business logic
+│   ├── models/           # Pydantic models
+│   └── core/             # Config, dependencies
+├── data/                 # Persisted data (FAISS, metadata)
+└── requirements.txt
+```
+
+### Frontend Structure
+```
+frontend/
+├── src/
+│   ├── components/       # React components
+│   ├── services/         # API service layer
+│   ├── types/            # TypeScript types
+│   └── App.tsx           # Main app component
+├── package.json
+└── vite.config.ts
+```
+
+## Naming Conventions
+- Python: snake_case for functions/variables, PascalCase for classes
+- TypeScript: camelCase for functions/variables, PascalCase for components/types
+- Files: snake_case for Python, kebab-case for TypeScript components
+- API routes: kebab-case (e.g., /api/upload-pdf)
+
+## Testing
+- Write unit tests for services
+- Use pytest for Python tests
+- Use descriptive test names
+
+## Git
+- Write clear commit messages
+- Keep commits atomic and focused
