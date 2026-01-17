@@ -8,7 +8,6 @@ from app.models.schemas import ChunkMetadata
 
 
 class PDFService:
-    """Service for PDF text extraction and chunking."""
     
     def __init__(self, settings: Settings):
         self.settings = settings
