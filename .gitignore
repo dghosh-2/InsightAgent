@@ -79,6 +79,8 @@ htmlcov/
 # Model cache (can be large)
 .cache/
 models/
+!backend/app/models/
+!backend/app/models/**
 
 # Temporary files
 tmp/

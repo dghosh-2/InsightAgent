@@ -32,6 +32,19 @@ class Settings(BaseSettings):
     # Search settings
     top_k_retrieval: int = 20  # Initial FAISS retrieval
     top_k_rerank: int = 5      # After reranking
+    faiss_use_ivfpq: bool = True
+    faiss_nlist: int = 100
+    faiss_m: int = 16
+    faiss_nbits: int = 8
+    faiss_nprobe: int = 10
+
+    # Semantic cache settings
+    redis_url: str = "redis://localhost:6379"
+    redis_index_name: str = "query_cache_idx"
+    redis_key_prefix: str = "cache:"
+    enable_semantic_cache: bool = True
+    cache_similarity_threshold: float = 0.88
+    cache_ttl_seconds: int = 86400
     
     # OpenAI settings
     openai_model: str = "gpt-4o-mini"

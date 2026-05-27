@@ -17,7 +17,7 @@ class SearchService:
         self.vector_store = vector_store
         self.top_k = settings.top_k_rerank  # Number of results to return
     
-    def search(self, query: str) -> list[tuple[ChunkMetadata, float]]:
+    def search(self, query: str, nprobe: int | None = None) -> list[tuple[ChunkMetadata, float]]:
         """
         Search for relevant chunks.
         
@@ -28,5 +28,5 @@ class SearchService:
             List of (chunk, relevance_score) tuples, sorted by relevance
         """
         # FAISS retrieval
-        results = self.vector_store.search(query, top_k=self.top_k)
+        results = self.vector_store.search(query, top_k=self.top_k, nprobe=nprobe)
         return results

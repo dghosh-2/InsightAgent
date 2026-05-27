@@ -30,7 +30,7 @@ class VectorStore:
         self.documents_path = settings.metadata_dir / "documents.json"
         
         # Initialize or load
-        self.index: Optional[faiss.IndexFlatIP] = None
+        self.index: Optional[faiss.Index] = None
         self.chunks: list[ChunkMetadata] = []
         self.documents: dict[str, DocumentInfo] = {}
         
@@ -45,11 +45,31 @@ class VectorStore:
     
     def _initialize(self) -> None:
         """Initialize empty index and metadata."""
-        # Use IndexFlatIP for inner product (cosine with normalized vectors)
-        self.index = faiss.IndexFlatIP(self.dimension)
+        self.index = self._create_flat_index()
         self.chunks = []
         self.documents = {}
         print("Initialized new FAISS index")
+
+    def _create_flat_index(self) -> faiss.IndexFlatIP:
+        return faiss.IndexFlatIP(self.dimension)
+
+    def _resolve_nlist(self, sample_count: int) -> int:
+        configured_nlist = max(1, int(getattr(self.settings, "faiss_nlist", 100)))
+        if sample_count <= configured_nlist:
+            return max(1, min(configured_nlist, max(16, sample_count // 4)))
+        return configured_nlist
+
+    def _create_ivfpq_index(self, sample_count: int) -> faiss.IndexIVFPQ:
+        nlist = self._resolve_nlist(sample_count)
+        m = int(getattr(self.settings, "faiss_m", 16))
+        nbits = int(getattr(self.settings, "faiss_nbits", 8))
+        quantizer = faiss.IndexFlatIP(self.dimension)
+        return faiss.IndexIVFPQ(quantizer, self.dimension, nlist, m, nbits)
+
+    def _should_use_ivfpq(self, sample_count: int) -> bool:
+        if not bool(getattr(self.settings, "faiss_use_ivfpq", True)):
+            return False
+        return sample_count >= max(16, int(getattr(self.settings, "faiss_nlist", 100)))
     
     def _load(self) -> None:
         """Load index and metadata from disk."""
@@ -124,23 +144,29 @@ class VectorStore:
         """
         if not chunks:
             return
-        
-        # Generate embeddings for all chunks
-        texts = [chunk.text for chunk in chunks]
-        
-        # Debug: print info about texts being embedded
-        print(f"Embedding {len(texts)} chunks...")
-        for i, t in enumerate(texts[:3]):  # Show first 3
-            print(f"  Chunk {i}: {len(t)} chars, preview: {repr(t[:100])}")
-        
-        embeddings = self.embedding_service.embed_texts(texts)
-        
-        # Add to FAISS index
-        self.index.add(embeddings.astype(np.float32))
-        
-        # Store chunk metadata
+
+        # Store chunk metadata first so rebuilds have the full dataset.
         self.chunks.extend(chunks)
-        
+
+        # Generate embeddings for new chunks
+        texts = [chunk.text for chunk in chunks]
+        embeddings = self.embedding_service.embed_texts(texts).astype(np.float32)
+
+        if self._should_use_ivfpq(len(self.chunks)):
+            if isinstance(self.index, faiss.IndexIVFPQ) and self.index.is_trained:
+                self.index.add(embeddings)
+            else:
+                self._rebuild_ivfpq_index()
+        else:
+            if not isinstance(self.index, faiss.IndexFlatIP):
+                self.index = self._create_flat_index()
+                if len(self.chunks) > len(chunks):
+                    existing_texts = [chunk.text for chunk in self.chunks[:-len(chunks)]]
+                    if existing_texts:
+                        existing_embeddings = self.embedding_service.embed_texts(existing_texts).astype(np.float32)
+                        self.index.add(existing_embeddings)
+            self.index.add(embeddings)
+
         # Store document info
         self.documents[document_id] = DocumentInfo(
             document_id=document_id,
@@ -153,6 +179,30 @@ class VectorStore:
         
         # Persist changes
         self.save()
+
+    def _rebuild_ivfpq_index(self) -> None:
+        if not self.chunks:
+            self.index = self._create_flat_index()
+            return
+
+        all_texts = [chunk.text for chunk in self.chunks]
+        all_embeddings = self.embedding_service.embed_texts(all_texts).astype(np.float32)
+        sample_count = all_embeddings.shape[0]
+
+        if not self._should_use_ivfpq(sample_count):
+            self.index = self._create_flat_index()
+            self.index.add(all_embeddings)
+            return
+
+        ivfpq = self._create_ivfpq_index(sample_count)
+        if sample_count < ivfpq.nlist:
+            self.index = self._create_flat_index()
+            self.index.add(all_embeddings)
+            return
+
+        ivfpq.train(all_embeddings)
+        ivfpq.add(all_embeddings)
+        self.index = ivfpq
     
     def remove_document(self, document_id: str) -> None:
         """
@@ -168,13 +218,16 @@ class VectorStore:
         
         # Rebuild index with remaining chunks
         self._initialize()
-        
-        if chunks_to_keep:
-            texts = [chunk.text for chunk in chunks_to_keep]
-            embeddings = self.embedding_service.embed_texts(texts)
-            self.index.add(embeddings.astype(np.float32))
-        
         self.chunks = chunks_to_keep
+
+        if chunks_to_keep:
+            if self._should_use_ivfpq(len(chunks_to_keep)):
+                self._rebuild_ivfpq_index()
+            else:
+                texts = [chunk.text for chunk in chunks_to_keep]
+                embeddings = self.embedding_service.embed_texts(texts).astype(np.float32)
+                self.index.add(embeddings)
+
         del self.documents[document_id]
         
         # Persist changes
@@ -188,7 +241,12 @@ class VectorStore:
         """Get list of all documents."""
         return list(self.documents.values())
     
-    def search(self, query: str, top_k: int = 20) -> list[tuple[ChunkMetadata, float]]:
+    def search(
+        self,
+        query: str,
+        top_k: int = 20,
+        nprobe: Optional[int] = None
+    ) -> list[tuple[ChunkMetadata, float]]:
         """
         Search for similar chunks using the query.
         
@@ -207,6 +265,9 @@ class VectorStore:
         query_embedding = query_embedding.reshape(1, -1).astype(np.float32)
         
         # Search FAISS
+        if isinstance(self.index, faiss.IndexIVFPQ):
+            self.index.nprobe = int(nprobe or getattr(self.settings, "faiss_nprobe", 10))
+
         k = min(top_k, self.index.ntotal)
         scores, indices = self.index.search(query_embedding, k)
         
